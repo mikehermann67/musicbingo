@@ -220,8 +220,8 @@
   .brand-footer .handle{ font-size:10px; color: var(--ink-soft); font-weight:700; letter-spacing:0.02em; }
   .card-number{ position:absolute; top:10px; left:12px; font-size:10.5px; color: var(--ink-soft); font-weight:600; letter-spacing:0.05em; }
   .player-line{
-    position:absolute; top:34px; right:12px; display:flex; align-items:center; gap:5px;
-    font-size:10px; color: var(--ink); white-space:nowrap;
+    text-align:right; display:flex; justify-content:flex-end; align-items:center; gap:5px;
+    font-size:10px; color: var(--ink); margin: 2px 4px 8px;
   }
   .player-line .blank{ display:inline-block; width:108px; height:11px; }
 
@@ -1114,11 +1114,6 @@
     num.textContent = 'CARD #'+cardNum;
     card.appendChild(num);
 
-    var playerLine = document.createElement('div');
-    playerLine.className = 'player-line';
-    playerLine.innerHTML = 'Player/Team: <span class="blank"></span>';
-    card.appendChild(playerLine);
-
     var toolbar = document.createElement('div');
     toolbar.className = 'card-toolbar';
     var reshuffleBtn = document.createElement('button');
@@ -1138,6 +1133,11 @@
       (evt ? '<div class="card-event">'+escapeHtml(evt)+'</div>' : '') +
       (cat ? '<div class="card-category">'+escapeHtml(cat)+'</div>' : '');
     card.appendChild(heading);
+
+    var playerLine = document.createElement('div');
+    playerLine.className = 'player-line';
+    playerLine.innerHTML = 'Player/Team: <span class="blank"></span>';
+    card.appendChild(playerLine);
 
     renderLetters(card);
 
