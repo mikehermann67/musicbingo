@@ -878,18 +878,31 @@
   /* ---------------- resolving pasted Spotify links (no metadata) ---------------- */
   function resolveTrackLinks(ids){
     // Spotify removed the batch GET /v1/tracks?ids= endpoint for Development Mode apps;
-    // fetch each track individually with limited concurrency.
-    var CONCURRENCY = 5;
+    // fetch each track individually with limited concurrency, backing off on rate limits.
+    var CONCURRENCY = 3;
+    function fetchWithRetry(id, token, attempt){
+      attempt = attempt || 0;
+      return fetch('https://api.spotify.com/v1/tracks/'+id, { headers:{ 'Authorization':'Bearer '+token } })
+        .then(function(r){
+          if(r.status === 429 && attempt < 4){
+            var waitSec = parseFloat(r.headers.get('Retry-After')) || 1.5;
+            return new Promise(function(resolve){ setTimeout(resolve, waitSec*1000); })
+              .then(function(){ return fetchWithRetry(id, token, attempt+1); });
+          }
+          return r;
+        });
+    }
     function runBatch(token, isRetry){
       var results = [];
-      var authFails = 0, otherFails = 0, networkFails = 0, sampleStatus = null;
+      var authFails = 0, otherFails = 0, networkFails = 0, rateLimitFails = 0, sampleStatus = null;
       var next = 0;
       function worker(){
         if(next >= ids.length) return Promise.resolve();
         var id = ids[next++];
-        return fetch('https://api.spotify.com/v1/tracks/'+id, { headers:{ 'Authorization':'Bearer '+token } })
+        return fetchWithRetry(id, token)
           .then(function(r){
             if(r.status === 401){ authFails++; return null; }
+            if(r.status === 429){ rateLimitFails++; return null; }
             if(!r.ok){ otherFails++; if(sampleStatus===null) sampleStatus = r.status; return null; }
             return r.json();
           })
@@ -907,7 +920,7 @@
           pkce.accessToken = null; pkce.accessTokenExpiry = 0;
           return ensureAccessToken().then(function(freshToken){ return runBatch(freshToken, true); });
         }
-        return { tracks: results, requested: ids.length, authFails: authFails, otherFails: otherFails, networkFails: networkFails, sampleStatus: sampleStatus };
+        return { tracks: results, requested: ids.length, authFails: authFails, otherFails: otherFails, networkFails: networkFails, rateLimitFails: rateLimitFails, sampleStatus: sampleStatus };
       });
     }
     return ensureAccessToken().then(function(token){ return runBatch(token, false); });
@@ -917,13 +930,15 @@
     var mapWrap = document.getElementById('pasteMapWrap');
     var ids = Array.from(new Set(rawIds));
     mapWrap.innerHTML = '';
-    msgEl.innerHTML = '<div class="ok-text">Found '+ids.length+' Spotify track link'+(ids.length===1?'':'s')+'. Looking up song info&hellip;</div>';
+    msgEl.innerHTML = '<div class="ok-text">Found '+ids.length+' Spotify track link'+(ids.length===1?'':'s')+'. Looking up song info&hellip; this can take a minute for a large playlist since Spotify limits how fast we can ask.</div>';
     resolveTrackLinks(ids).then(function(result){
       pendingLinkTracks = result.tracks;
       if(result.tracks.length === 0){
         var reason;
         if(result.authFails > 0){
           reason = 'Your Spotify connection may have expired &mdash; go to the "Spotify API" tab, click Connect again, then paste these links once more.';
+        } else if(result.rateLimitFails >= result.requested * 0.3){
+          reason = 'Spotify is rate-limiting these requests (too many lookups at once). Wait a minute or two and try pasting again, or paste a smaller batch at a time (30-40 songs) instead of the whole playlist.';
         } else if(result.networkFails >= result.requested * 0.5){
           reason = 'The requests to Spotify never got a response at all &mdash; this usually means Spotify (or your browser/an extension) is blocking these requests outright right now, not a problem with the songs themselves. Try again in a few minutes, try a different browser, or temporarily disable ad-blocking/privacy extensions. The copy-paste-from-Spotify method (pasting the actual song rows, not just links) avoids this entirely.';
         } else if(result.sampleStatus){
@@ -935,8 +950,13 @@
         return;
       }
       var shortfall = result.requested - result.tracks.length;
-      msgEl.innerHTML = '<div class="ok-text">Resolved '+result.tracks.length+' of '+result.requested+' tracks.'+
-        (shortfall>0 ? ' ('+shortfall+' could not be looked up &mdash; they may be unavailable or region-restricted.)' : '')+'</div>';
+      var shortfallNote = '';
+      if(shortfall > 0){
+        shortfallNote = result.rateLimitFails > 0
+          ? ' ('+shortfall+' hit Spotify\'s rate limit &mdash; try pasting the rest again in a minute.)'
+          : ' ('+shortfall+' could not be looked up &mdash; they may be unavailable or region-restricted.)';
+      }
+      msgEl.innerHTML = '<div class="ok-text">Resolved '+result.tracks.length+' of '+result.requested+' tracks.'+shortfallNote+'</div>';
       mapWrap.innerHTML = '<button class="btn ghost" id="confirmLinkAddBtn" type="button">Add '+result.tracks.length+' songs to pool</button>';
       document.getElementById('confirmLinkAddBtn').onclick = confirmLinkAdd;
     }).catch(function(err){
